@@ -47,7 +47,6 @@ export const AuthProvider = ({ children }) => {
     return signInWithPopup(auth, provider);
   };
 
-  // Logout
   const logout = () => {
     return signOut(auth);
   };
