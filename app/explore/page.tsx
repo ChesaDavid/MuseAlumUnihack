@@ -1,388 +1,226 @@
-// pages/index.js
-'use client';
-import { useState, useEffect } from 'react';
+"use client"
 
-export default function Home() {
-  const [userLocation, setUserLocation] = useState(null);
-  const [loading, setLoading] = useState(true);
-  const [city, setCity] = useState('');
+import React, { useEffect, useRef, useState } from "react"
+import { motion } from "framer-motion"
 
+const fadeInUp = {
+  hidden: { opacity: 0, y: 20 },
+  visible: { opacity: 1, y: 0, transition: { duration: 0.6 } },
+}
+
+export default function ExplorePage() {
+  const mapRef = useRef<any>(null)
+  const mapContainerRef = useRef<HTMLDivElement | null>(null)
+  const [loaded, setLoaded] = useState(false)
+  const [messages, setMessages] = useState<any[]>([])
+  const [input, setInput] = useState("")
+  const [loading, setLoading] = useState(false)
+
+  // Load Leaflet JS/CSS dynamically on client
   useEffect(() => {
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          
-          setUserLocation({ lat, lng });
-          
-          try {
-            const response = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=ro`
-            );
-            const data = await response.json();
-            setCity(data.city || data.locality || 'Locația ta');
-          } catch (error) {
-            setCity('Locația ta');
-          }
-          
-          setLoading(false);
-        },
-        (error) => {
-          console.log('Eroare geolocație:', error);
-          setUserLocation(null);
-          setLoading(false);
-        }
-      );
-    } else {
-      setUserLocation(null);
-      setLoading(false);
+    const Lcss = document.createElement("link")
+    Lcss.rel = "stylesheet"
+    Lcss.href = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.css"
+    document.head.appendChild(Lcss)
+
+    const script = document.createElement("script")
+    script.src = "https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"
+    script.onload = () => setLoaded(true)
+    document.body.appendChild(script)
+
+    return () => {
+      try { document.head.removeChild(Lcss) } catch {};
+      try { document.body.removeChild(script) } catch {};
     }
-  }, []);
+  }, [])
 
-  const retryLocation = () => {
-    setLoading(true);
-    if (navigator.geolocation) {
-      navigator.geolocation.getCurrentPosition(
-        async (position) => {
-          const lat = position.coords.latitude;
-          const lng = position.coords.longitude;
-          
-          setUserLocation({ lat, lng });
-          
-          try {
-            const response = await fetch(
-              `https://api.bigdatacloud.net/data/reverse-geocode-client?latitude=${lat}&longitude=${lng}&localityLanguage=ro`
-            );
-            const data = await response.json();
-            setCity(data.city || data.locality || 'Locația ta');
-          } catch (error) {
-            setCity('Locația ta');
-          }
-          
-          setLoading(false);
-        },
-        (error) => {
-          console.log('Eroare geolocație:', error);
-          setLoading(false);
-        }
-      );
-    }
-  };
+  // Initialize map after leaflet loaded
+  useEffect(() => {
+    if (!loaded || !mapContainerRef.current) return
+    // @ts-ignore
+    const L = (window as any).L
+    if (!L) return
 
-  // Museum AI Component integrat direct
-  const [messages, setMessages] = useState([]);
-  const [input, setInput] = useState('');
-  const [aiLoading, setAiLoading] = useState(false);
-  const messagesEndRef = useState(null);
+    mapRef.current = L.map(mapContainerRef.current).setView([45.9432, 24.9668], 6) // Romania center default
+    L.tileLayer("https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png", {
+      attribution: "© OpenStreetMap contributors",
+    }).addTo(mapRef.current)
+  }, [loaded])
 
-  const museumDatabase = {
-    romania: {
-      country: "Romania",
-      museums: [
-        {
-          name: "Muzeul Național de Artă al României",
-          city: "București",
-          description: "Găzduiește colecția națională de artă românească și europeană",
-          highlights: ["Arta medievală românească", "Colecția europeană", "Colecția Theodor Aman"],
-          type: "Muzeu de Artă",
-          rating: 4.6,
-          mustSee: true
-        },
-        {
-          name: "Muzeul Național de Istorie a României",
-          city: "București",
-          description: "Prezintă istoria României de la preistorie până în era modernă",
-          highlights: ["Tezaurul de la Pietroasa", "Artefacte romane", "Bijuterii regale"],
-          type: "Muzeu de Istorie",
-          rating: 4.5,
-          mustSee: true
-        }
-      ]
-    },
-    france: {
-      country: "France",
-      museums: [
-        {
-          name: "Louvre Museum",
-          city: "Paris",
-          description: "Cel mai mare muzeu de artă din lume",
-          highlights: ["Mona Lisa", "Venus de Milo", "Victoriei din Samotracia"],
-          type: "Muzeu de Artă",
-          rating: 4.8,
-          mustSee: true
-        }
-      ]
-    },
-    italy: {
-      country: "Italy",
-      museums: [
-        {
-          name: "Vatican Museums",
-          city: "Vatican City",
-          description: "Artă creștină și sculpturi clasice",
-          highlights: ["Capela Sixtină", "Camerele lui Rafael"],
-          type: "Muzeu de Artă",
-          rating: 4.8,
-          mustSee: true
-        }
-      ]
-    }
-  };
+  // helper: place markers from museums array
+  const addMuseumMarkers = async (museums: any[]) => {
+    const map = mapRef.current
+    if (!map) return
 
-  const getMuseumsByCountry = (countryName) => {
-    const normalizedCountry = countryName.toLowerCase().trim();
-    for (const [key, data] of Object.entries(museumDatabase)) {
-      if (data.country.toLowerCase().includes(normalizedCountry) || normalizedCountry.includes(key)) {
-        return data;
+    // remove existing layers (simple approach)
+    map.eachLayer((layer: any) => {
+      try {
+        if (layer && layer.options && layer.options.pane !== 'tilePane') map.removeLayer(layer)
+      } catch {}
+    })
+
+    const group = (window as any).L.featureGroup()
+
+    for (const m of museums) {
+      const q = encodeURIComponent(`${m.name || ""} ${m.city || ""}`)
+      try {
+        const res = await fetch(`https://nominatim.openstreetmap.org/search?q=${q}&format=json&limit=1`)
+        const data = await res.json()
+        if (data && data[0]) {
+          const lat = parseFloat(data[0].lat)
+          const lon = parseFloat(data[0].lon)
+          const marker = (window as any).L.marker([lat, lon])
+          marker.bindPopup(`<strong>${m.name}</strong><br/>${m.city || ""}<br/><small>${m.description || ""}</small>`)
+          marker.addTo(group)
+        }
+      } catch (e) {
+        console.warn("geocode failed", e)
       }
     }
-    return null;
-  };
 
-  const generateAIResponse = (country) => {
-    const countryData = getMuseumsByCountry(country);
-    
-    if (!countryData) {
-      return {
-        text: `Nu am informații despre muzee în ${country}. Încearcă: România, Franța, Italia.`,
-        museums: []
-      };
-    }
-
-    let response = `🏛️ **Muzee de top în ${countryData.country}**\n\n`;
-    countryData.museums.forEach((museum, index) => {
-      response += `${index + 1}. **${museum.name}** (${museum.city})\n`;
-      response += `   ⭐ ${museum.rating}/5 | ${museum.type}\n`;
-      response += `   📍 ${museum.description}\n\n`;
-    });
-
-    return {
-      text: response,
-      museums: countryData.museums
-    };
-  };
-
-  const handleSend = async () => {
-    if (!input.trim() || aiLoading) return;
-
-    const userMessage = { type: 'user', content: input };
-    setMessages(prev => [...prev, userMessage]);
-    setInput('');
-    setAiLoading(true);
-
-    setTimeout(() => {
-      const aiResponse = generateAIResponse(input);
-      const aiMessage = { 
-        type: 'ai', 
-        content: aiResponse.text,
-        museums: aiResponse.museums
-      };
-      setMessages(prev => [...prev, aiMessage]);
-      setAiLoading(false);
-    }, 1500);
-  };
-
-  if (loading) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">🗺️</div>
-          <div className="text-xl text-gray-600">Se detectează locația ta...</div>
-        </div>
-      </div>
-    );
+    group.addTo(map)
+    try { map.fitBounds(group.getBounds(), { maxZoom: 12 }) } catch {}
   }
 
-  if (!userLocation) {
-    return (
-      <div className="min-h-screen bg-gray-100 flex items-center justify-center">
-        <div className="text-center">
-          <div className="text-4xl mb-4">❌</div>
-          <h2 className="text-xl font-semibold text-gray-800 mb-2">Nu s-a putut detecta locația</h2>
-          <button
-            onClick={retryLocation}
-            className="bg-blue-500 hover:bg-blue-600 text-white px-6 py-3 rounded-lg font-semibold"
-          >
-            🔄 Încearcă din nou
-          </button>
-        </div>
-      </div>
-    );
+  const sendPrompt = async () => {
+    if (!input.trim()) return
+    setMessages(prev => [...prev, { type: "user", text: input }])
+    setInput("")
+    setLoading(true)
+
+    try {
+      const res = await fetch('/api/openai', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ prompt: input })
+      })
+
+      if (!res.ok) throw new Error(`OpenAI returned ${res.status}`)
+
+      const payload = await res.json()
+      const aiText = payload.text || JSON.stringify(payload)
+      setMessages(prev => [...prev, { type: 'ai', text: aiText }])
+
+      if (payload.museums && Array.isArray(payload.museums) && payload.museums.length > 0) {
+        await addMuseumMarkers(payload.museums)
+      }
+    } catch (err: any) {
+      setMessages(prev => [...prev, { type: 'ai', text: 'Sorry, failed to fetch suggestions.' }])
+      console.error(err)
+    } finally {
+      setLoading(false)
+    }
   }
 
   return (
-    <div className="min-h-screen bg-gray-100 p-4">
-      <div className="max-w-7xl mx-auto">
-        <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-          
-          {/* Coloana stângă - Harta */}
-          <div className="bg-white rounded-2xl shadow-xl p-6">
-            <div className="text-center mb-6">
-              <h2 className="text-2xl font-bold text-gray-800">
-                📍 {city}
-              </h2>
-              <p className="text-gray-600 mt-1">Locația ta actuală</p>
+    <div className="flex min-h-screen items-center justify-center bg-linear-to-br from-gray-50 via-white to-red-50 dark:from-gray-900 dark:via-gray-800 dark:to-gray-900">
+      <main className="flex min-h-screen w-full max-w-6xl flex-col items-center justify-center px-6 py-12 sm:px-12">
+        {/* Header */}
+        <motion.div initial="hidden" animate="visible" variants={fadeInUp} className="flex items-center gap-4 mb-8">
+          <motion.div whileHover={{ scale: 1.05, rotate: 3 }} className="h-10 w-10 rounded-full bg-linear-to-br from-red-500 to-red-700 flex items-center justify-center text-white font-bold text-lg shadow">
+            M
+          </motion.div>
+          <span className="text-2xl font-bold bg-linear-to-r from-red-600 to-red-500 bg-clip-text text-transparent">Musealum</span>
+        </motion.div>
+
+        <motion.div initial="hidden" animate="visible" variants={fadeInUp} transition={{ delay: 0.1 }} className="w-full grid grid-cols-1 lg:grid-cols-3 gap-6">
+          <div className="lg:col-span-2 space-y-4">
+            <div className="h-[520px] rounded-2xl  overflow-hidden border border-gray-200 dark:border-gray-700 shadow-md">
+              <div ref={mapContainerRef} style={{ height: '100%', width: '100%' }} />
             </div>
-
-            <div className="relative bg-gradient-to-br from-blue-100 to-green-100 rounded-xl p-6 h-80 flex items-center justify-center border-2 border-dashed border-gray-300">
-              
-              <div className="absolute" style={{ 
-                top: '50%', 
-                left: '50%',
-                transform: 'translate(-50%, -50%)'
-              }}>
-                <div className="animate-pulse bg-green-500 w-12 h-12 rounded-full flex items-center justify-center text-white text-xl shadow-lg">
-                  📍
-                </div>
-                <div className="absolute top-14 left-1/2 transform -translate-x-1/2 bg-white px-3 py-1 rounded-lg shadow-lg border">
-                  <p className="text-xs font-semibold whitespace-nowrap">
-                    Tu ești aici!
-                  </p>
-                </div>
-              </div>
-
-              <div className="absolute bottom-3 left-3 bg-black bg-opacity-70 text-white px-2 py-1 rounded-lg text-xs">
-                {userLocation.lat.toFixed(4)}°, {userLocation.lng.toFixed(4)}°
-              </div>
-
-              <div className="absolute top-3 right-3 bg-green-500 text-white px-2 py-1 rounded-full text-xs">
-                ✅ Reală
-              </div>
-            </div>
-
-            <div className="text-center mt-4">
-              <a 
-                href={`https://www.google.com/maps?q=${userLocation.lat},${userLocation.lng}`}
-                target="_blank" 
-                rel="noopener noreferrer"
-                className="inline-flex items-center space-x-2 bg-red-500 hover:bg-red-600 text-white px-4 py-2 rounded-lg font-semibold transition-colors text-sm"
-              >
-                <span>🗺️</span>
-                <span>Google Maps</span>
-              </a>
-            </div>
+            <div className="text-sm text-gray-600">Tip: Try “Museums in Bucharest” or “Top museums in Romania”.</div>
           </div>
 
-          {/* Coloana dreaptă - Museum AI */}
-          <div className="bg-white rounded-2xl shadow-xl overflow-hidden">
-            {/* Header */}
-            <div className="bg-gradient-to-r from-purple-600 to-blue-600 p-6 text-white">
-              <div className="flex items-center space-x-3">
-                <div className="w-12 h-12 bg-white bg-opacity-20 rounded-full flex items-center justify-center">
-                  🏛️
-                </div>
-                <div>
-                  <h1 className="text-2xl font-bold">Museum Explorer AI</h1>
-                  <p className="text-purple-100">Descoperă cele mai bune muzee</p>
-                </div>
-              </div>
+          <div className="bg-white dark:bg-gray-800 rounded-2xl p-5 shadow-md border border-gray-200 dark:border-gray-700 flex flex-col h-[590px]">
+            {/* Chat Header */}
+            <div className="mb-4 pb-4 border-b border-gray-200 dark:border-gray-700">
+              <h3 className="font-bold text-lg bg-linear-to-r from-red-600 to-red-500 bg-clip-text text-transparent">🗺️ Museum Guide</h3>
+              <p className="text-xs text-gray-500 dark:text-gray-400 mt-1">Ask for museums by city or country</p>
             </div>
 
-            {/* Quick Buttons */}
-            <div className="p-4 bg-gray-50 border-b">
-              <p className="text-sm text-gray-600 mb-2">Țări disponibile:</p>
-              <div className="flex flex-wrap gap-2">
-                {['România', 'Franța', 'Italia'].map(country => (
-                  <button
-                    key={country}
-                    onClick={() => setInput(country)}
-                    className="px-3 py-1 bg-white border border-gray-300 rounded-full text-sm hover:bg-gray-50 transition-colors"
+            {/* Messages Area */}
+            <div className="flex-1 overflow-y-auto space-y-4 mb-4 pr-2 scroll-smooth">
+              {messages.length === 0 && (
+                <motion.div initial={{ opacity: 0, y: 10 }} animate={{ opacity: 1, y: 0 }} className="h-full flex flex-col items-center justify-center text-center text-gray-500">
+                  <div className="text-4xl mb-3">🎨</div>
+                  <p className="text-sm font-medium">Start exploring!</p>
+                  <p className="text-xs mt-1">Try: "Museums in Bucharest"</p>
+                </motion.div>
+              )}
+              {messages.map((m, i) => (
+                <motion.div
+                  key={i}
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.3 }}
+                  className={`flex ${m.type === 'user' ? 'justify-end' : 'justify-start'}`}
+                >
+                  <div
+                    className={`px-4 py-3 rounded-2xl max-w-[85%] text-sm leading-relaxed shadow-sm ${
+                      m.type === 'user'
+                        ? 'bg-linear-to-br from-red-600 to-red-700 text-white rounded-br-none'
+                        : 'bg-gray-100 dark:bg-gray-700 text-gray-900 dark:text-gray-100 rounded-bl-none border border-gray-200 dark:border-gray-600'
+                    }`}
                   >
-                    {country}
-                  </button>
-                ))}
-              </div>
-            </div>
-
-            {/* Chat Messages */}
-            <div className="h-80 overflow-y-auto p-4">
-              {messages.length === 0 ? (
-                <div className="text-center text-gray-500 mt-8">
-                  <div className="text-4xl mb-4">🏛️</div>
-                  <p className="text-lg font-semibold">Bun venit!</p>
-                  <p className="text-sm">Întreabă-mă despre muzee</p>
-                </div>
-              ) : (
-                <div className="space-y-4">
-                  {messages.map((message, index) => (
-                    <div key={index} className={`flex ${message.type === 'user' ? 'justify-end' : 'justify-start'}`}>
-                      <div className={`max-w-[80%] rounded-2xl p-4 ${
-                        message.type === 'user' ? 'bg-blue-500 text-white rounded-br-none' : 'bg-gray-100 text-gray-800 rounded-bl-none'
-                      }`}>
-                        {message.type === 'ai' ? (
-                          <div className="whitespace-pre-line">
-                            {message.content.split('**').map((part, i) => 
-                              i % 2 === 1 ? <strong key={i} className="text-purple-600">{part}</strong> : part
-                            )}
-                          </div>
-                        ) : (
-                          message.content
-                        )}
-                        
-                        {message.type === 'ai' && message.museums && message.museums.length > 0 && (
-                          <div className="mt-4 space-y-3">
-                            {message.museums.map((museum, museumIndex) => (
-                              <div key={museumIndex} className="p-3 rounded-lg border bg-white border-gray-200">
-                                <div className="flex justify-between items-start mb-2">
-                                  <h4 className="font-semibold text-gray-900">{museum.name}</h4>
-                                  <div className="flex items-center space-x-1">
-                                    <span className="text-yellow-500">⭐</span>
-                                    <span className="text-sm font-medium">{museum.rating}</span>
-                                  </div>
-                                </div>
-                                <p className="text-sm text-gray-600 mb-2">{museum.description}</p>
-                                <div className="flex justify-between items-center text-xs text-gray-500">
-                                  <span>🏙️ {museum.city}</span>
-                                  <span>📚 {museum.type}</span>
-                                </div>
-                              </div>
-                            ))}
-                          </div>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                  {aiLoading && (
-                    <div className="flex justify-start">
-                      <div className="bg-gray-100 rounded-2xl rounded-bl-none p-4">
-                        <div className="flex space-x-2">
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce"></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.1s' }}></div>
-                          <div className="w-2 h-2 bg-gray-400 rounded-full animate-bounce" style={{ animationDelay: '0.2s' }}></div>
-                        </div>
-                      </div>
-                    </div>
-                  )}
-                </div>
+                    {m.text}
+                  </div>
+                </motion.div>
+              ))}
+              {loading && (
+                <motion.div
+                  initial={{ opacity: 0, y: 10 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  className="flex justify-start"
+                >
+                  <div className="px-4 py-3 rounded-2xl rounded-bl-none bg-gray-100 dark:bg-gray-700 flex gap-2">
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce"></div>
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.2s' }}></div>
+                    <div className="w-2 h-2 rounded-full bg-gray-400 animate-bounce" style={{ animationDelay: '0.4s' }}></div>
+                  </div>
+                </motion.div>
               )}
             </div>
 
             {/* Input Area */}
-            <div className="border-t p-4 bg-white">
-              <div className="flex space-x-3">
+            <div className="border-t border-gray-200 dark:border-gray-700 pt-3">
+              <div className="flex gap-2">
                 <input
-                  type="text"
                   value={input}
                   onChange={(e) => setInput(e.target.value)}
-                  onKeyPress={(e) => e.key === 'Enter' && handleSend()}
-                  placeholder="Scrie o țară (ex: România, Franța...)"
-                  className="flex-1 px-4 py-3 border border-gray-300 rounded-full focus:ring-2 focus:ring-purple-500 focus:border-transparent outline-none"
-                  disabled={aiLoading}
+                  onKeyPress={(e) => e.key === 'Enter' && !loading && sendPrompt()}
+                  disabled={loading}
+                  className="flex-1 px-4 py-2.5 border border-gray-300 dark:border-gray-600 dark:bg-gray-700 dark:text-white rounded-full text-sm focus:outline-none focus:ring-2 focus:ring-red-500 transition-all"
+                  placeholder="Museums in Bucharest..."
                 />
-                <button
-                  onClick={handleSend}
-                  disabled={aiLoading || !input.trim()}
-                  className="px-6 py-3 bg-purple-600 text-white rounded-full hover:bg-purple-700 disabled:bg-purple-300 transition-colors"
+                <motion.button
+                  whileHover={{ scale: 1.05 }}
+                  whileTap={{ scale: 0.95 }}
+                  onClick={sendPrompt}
+                  disabled={loading || !input.trim()}
+                  className="px-6 py-2.5 rounded-full bg-linear-to-r from-red-600 to-red-700 text-white font-semibold text-sm shadow-md hover:shadow-lg disabled:opacity-50 disabled:cursor-not-allowed transition-all"
                 >
-                  Trimite
-                </button>
+                  {loading ? '✨' : '🔍'}
+                </motion.button>
               </div>
             </div>
           </div>
+        </motion.div>
 
-        </div>
-      </div>
+        <motion.div initial="hidden" animate="visible" variants={fadeInUp} transition={{ delay: 0.4 }} className="w-full mt-8 grid grid-cols-1 md:grid-cols-3 gap-6">
+          {[
+            { icon: '🗺️', title: 'Interactive Map', desc: 'Explore museum locations visually' },
+            { icon: '🤖', title: 'AI Suggestions', desc: 'Ask for curated museum lists' },
+            { icon: '🌐', title: 'Global Coverage', desc: 'Find museums around the world' },
+          ].map((f, i) => (
+            <motion.div key={i} whileHover={{ y: -5 }} className="p-4 rounded-2xl bg-white dark:bg-gray-800 border border-gray-200 dark:border-gray-700 shadow-sm">
+              <div className="text-3xl mb-2">{f.icon}</div>
+              <h4 className="font-semibold text-gray-900 dark:text-white mb-1">{f.title}</h4>
+              <p className="text-sm text-gray-600 dark:text-gray-400">{f.desc}</p>
+            </motion.div>
+          ))}
+        </motion.div>
+
+      </main>
     </div>
-  );
+  )
 }
